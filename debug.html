@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>debug</title></head>
+<body><pre id="out" style="font-size:11px"></pre>
+<script src="lp.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const PAGE = params.get('page') || 'Esports_World_Cup/2026';
+LP.loadTournament(PAGE, { src: 'local', force: true }).then(m => {
+  const slim = {
+    nMatches: m.matches.length,
+    nGroups: m.groups.length,
+    nTeams: m.teams.length,
+    nBrackets: m.brackets.length,
+    bracketSummary: m.brackets.map(b => ({ name: b.name, rounds: b.rounds.map(r => r.length), roundNames: b.roundNames, qual: b.qualified.length, third: !!b.thirdPlace })),
+    firstGroup: m.groups[0],
+    match0: m.matches[0],
+    lastMatch: m.matches[m.matches.length - 1],
+    prizes: m.prizes.slice(0, 3),
+    team0: m.teams[0],
+    info: m.info,
+  };
+  document.getElementById('out').textContent = JSON.stringify(slim, null, 1);
+}).catch(e => document.getElementById('out').textContent = 'ERR ' + e.stack);
+</script></body></html>
