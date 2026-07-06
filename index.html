@@ -333,9 +333,10 @@ function render() {
     renderBracketTab(main, tab);
   } else {
     ({ matches: renderMatches, groups: renderGroups, info: renderInfo })[tab.id](main);
-    main.append(h('div', { class: 'attribution' },
-      'Data & images from ', h('a', { href: model.url, target: '_blank', rel: 'noopener' }, 'Liquipedia'),
-      ' (CC BY-SA 3.0) · unofficial demo'));
+    if (tab.id !== 'matches')   // matches puts attribution inside its scroller
+      main.append(h('div', { class: 'attribution' },
+        'Data & images from ', h('a', { href: model.url, target: '_blank', rel: 'noopener' }, 'Liquipedia'),
+        ' (CC BY-SA 3.0) · unofficial demo'));
   }
   document.getElementById('todayBtn').style.display =
     (activeTab === 'matches' && model.matches.length) ? 'block' : 'none';
@@ -345,37 +346,46 @@ function render() {
 /* ---------------- matches ---------------- */
 function renderMatches(main) {
   const now = Date.now() / 1000;
+  const wrap = h('div', { class: 'matches-wrap' });
+  main.append(wrap);
 
-  // hero: all live series, else next upcoming (worldcup2026 pattern)
+  // hero: live series (max 2 pinned), else next upcoming (worldcup2026 pattern)
   const live = model.matches.filter(m => UI.matchState(m, now) === 'live' && m.team1 && m.team2);
   const next = model.matches.find(m => UI.matchState(m, now) === 'upcoming' && m.ts);
   const hero = h('section', { class: 'hero' });
-  if (live.length) live.forEach(m => hero.append(UI.heroCard(m, 'live')));
+  if (live.length) live.slice(0, 2).forEach(m => hero.append(UI.heroCard(m, 'live')));
   else if (next) hero.append(UI.heroCard(next, 'next'));
   hero.querySelectorAll('.hero-card').forEach(c =>
     c.addEventListener('click', () => {
       const el = document.getElementById('m-' + c.dataset.mid);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }));
-  main.append(hero);
+  wrap.append(hero);
+  if (live.length > 2)
+    wrap.append(h('div', { class: 'hero-more', onclick: () => scrollToCurrent(true) },
+      `+${live.length - 2} more live ↓`));
 
   const filters = [
     { id: 'all', label: 'All' },
     ...model.groups.map(g => ({ id: g.name, label: g.name.replace('Group ', 'Grp ') })),
     { id: 'ko', label: 'Knockout' },
   ];
-  main.append(h('div', { class: 'chip-bar' }, filters.map(f =>
+  wrap.append(h('div', { class: 'chip-bar' }, filters.map(f =>
     h('button', { class: 'chip-tab' + (matchFilter === f.id ? ' active' : ''), onclick: () => { matchFilter = f.id; render(); } }, f.label))));
 
+  // schedule scrolls in its own pane; hero + chips stay pinned above it
+  const scroller = h('div', { class: 'scroller' });
+  wrap.append(scroller);
+
   if (model.partial)
-    main.append(h('div', { class: 'sub', style: 'display:flex;gap:8px;align-items:center' },
+    scroller.append(h('div', { class: 'sub', style: 'display:flex;gap:8px;align-items:center' },
       h('span', { class: 'spinner', style: 'width:12px;height:12px;border-width:2px;margin:0' }),
       'Loading group stage…'));
 
   let ms = model.matches;
   if (matchFilter === 'ko') ms = ms.filter(m => !/^Group/.test(m.stage || ''));
   else if (matchFilter !== 'all') ms = ms.filter(m => (m.stage || '') === matchFilter);
-  if (!ms.length) { main.append(h('div', { class: 'loading' }, 'No matches.')); return; }
+  if (!ms.length) { scroller.append(h('div', { class: 'loading' }, 'No matches.')); return; }
 
   const days = new Map();
   for (const m of ms) {
@@ -383,15 +393,17 @@ function renderMatches(main) {
     if (!days.has(key)) days.set(key, { ts: m.ts, list: [] });
     days.get(key).list.push(m);
   }
-  const todayKey = UI.dayKey(Date.now() / 1000);
   for (const [key, day] of days) {
     const rel = day.ts ? UI.relDay(day.ts) : null;
     const head = h('div', { class: 'day-head' },
       rel ? [h('span', { class: 'today-tag' }, rel), ' · '] : null,
       key === 'tbd' ? 'Date TBD' : UI.fmtDay.format(new Date(day.ts * 1000)));
     const cards = day.list.map(m => { const c = UI.matchCard(m); c.id = 'm-' + m.id; return c; });
-    main.append(h('section', { class: 'day', 'data-day': key }, head, ...cards));
+    scroller.append(h('section', { class: 'day', 'data-day': key }, head, ...cards));
   }
+  scroller.append(h('div', { class: 'attribution' },
+    'Data & images from ', h('a', { href: model.url, target: '_blank', rel: 'noopener' }, 'Liquipedia'),
+    ' (CC BY-SA 3.0) · unofficial demo'));
   maybeAutoScroll();
 }
 
