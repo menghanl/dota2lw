@@ -331,6 +331,9 @@ function render() {
     if (btn) btn.classList.toggle('active', t.id === activeTab);
   }
   const main = document.getElementById('main');
+  // keep scroll position when re-rendering the same tab (auto-refresh)
+  const sameTab = render._tab === activeTab;
+  const prevScroll = sameTab ? (main.querySelector('.scroller') || main).scrollTop : 0;
   main.innerHTML = '';
   if (!model) return;
   const tab = TABS.find(t => t.id === activeTab) || TABS[0];
@@ -345,6 +348,11 @@ function render() {
   }
   document.getElementById('todayBtn').style.display =
     (activeTab === 'matches' && model.matches.length) ? 'block' : 'none';
+  if (sameTab && prevScroll) {
+    const sc = main.querySelector('.scroller') || main;
+    sc.scrollTop = prevScroll;
+  }
+  render._tab = activeTab;
   updatedLabel();
 }
 

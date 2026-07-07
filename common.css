@@ -66,23 +66,32 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { scroll-behavior: smooth; }
+/* app frame: header / scrolling main / tab bar as a flex column — the tab bar
+   lives IN FLOW, not position:fixed (worldcup2026 pattern; fixed bottom bars
+   misplace in iOS standalone without viewport-fit=cover, WebKit 237961) */
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  padding-bottom: calc(var(--tabbar-h) + 8px);
+  height: 100dvh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 12px; }
+main.wrap {
+  flex: 1; min-height: 0; width: 100%;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  padding-bottom: 0;
+}
 a { color: var(--accent); text-decoration: none; }
 .dim { color: var(--dim); }
 .tiny { font-size: 11px; }
 
-/* ---------- header ---------- */
+/* ---------- header (in flow; body never scrolls) ---------- */
 .app-header {
-  position: sticky; top: 0; z-index: 30;
+  flex: none; z-index: 30;
   background: var(--bar-bg);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
 }
 .app-header .bar {
@@ -118,9 +127,8 @@ a { color: var(--accent); text-decoration: none; }
 
 /* ---------- bottom tab bar ---------- */
 .tabbar {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+  flex: none; z-index: 40;
   background: var(--bar-bg);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--line);
   padding-bottom: var(--tab-pad);
 }
@@ -153,11 +161,7 @@ a { color: var(--accent); text-decoration: none; }
 .team-cell.tbd .team-name { color: var(--dim); font-weight: 400; font-size: 13px; }
 
 /* ---------- matches tab: pinned hero + chips, scrolling schedule ---------- */
-.matches-wrap {
-  display: flex; flex-direction: column;
-  height: calc(100dvh - 47px - var(--tabbar-h));
-  min-height: 400px;
-}
+.matches-wrap { display: flex; flex-direction: column; height: 100%; }
 .matches-wrap .chip-bar { flex: none; }
 .scroller { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .scroller .day-head { top: 0; }
@@ -248,7 +252,7 @@ a { color: var(--accent); text-decoration: none; }
 /* ---------- day headers / agenda ---------- */
 .day { scroll-margin-top: 56px; }
 .day-head {
-  position: sticky; top: 47px; z-index: 20;
+  position: sticky; top: 0; z-index: 20;
   font-size: 12px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase;
   color: var(--dim); padding: 10px 2px 6px;
   background: linear-gradient(var(--bg) 75%, transparent);
@@ -296,7 +300,7 @@ a { color: var(--accent); text-decoration: none; }
 .qual-row:last-child { border-bottom: 0; }
 
 /* ---------- metro bracket + lens (worldcup2026 pattern) ---------- */
-.metro-wrap { display: flex; flex-direction: column; height: calc(100dvh - 47px - var(--tabbar-h)); min-height: 480px; }
+.metro-wrap { display: flex; flex-direction: column; height: 100%; min-height: 420px; }
 .metro-pane { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .metro-pane::-webkit-scrollbar { display: none; }
 .metro-head { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between;
@@ -412,14 +416,14 @@ svg.trace .mt-station { opacity: .22; } svg.trace .mt-station.on { opacity: 1; }
 /* ---------- floating: today btn, banner, toast ---------- */
 #todayBtn {
   position: fixed; right: max(14px, env(safe-area-inset-right));
-  bottom: calc(70px + env(safe-area-inset-bottom)); z-index: 40;
+  bottom: calc(var(--tabbar-h) + 12px); z-index: 40;
   background: var(--card2); color: var(--text); border: 1px solid var(--line);
   border-radius: 999px; padding: 10px 16px; font-size: 13px; font-weight: 600;
   cursor: pointer; box-shadow: var(--shadow); display: none;
 }
 #banner {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(118px + env(safe-area-inset-bottom)); z-index: 41;
+  bottom: calc(var(--tabbar-h) + 58px); z-index: 41;
   background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-bd);
   font-size: 12.5px; padding: 8px 14px; border-radius: 999px;
   opacity: 0; pointer-events: none; transition: opacity .3s; white-space: nowrap;
@@ -427,7 +431,7 @@ svg.trace .mt-station { opacity: .22; } svg.trace .mt-station.on { opacity: 1; }
 #banner.show { opacity: 1; }
 #toast {
   position: fixed; left: 50%; transform: translateX(-50%) translateY(8px);
-  bottom: calc(118px + env(safe-area-inset-bottom)); z-index: 42;
+  bottom: calc(var(--tabbar-h) + 58px); z-index: 42;
   background: var(--ok-bg); color: var(--ok-fg); border: 1px solid var(--ok-bd);
   font-size: 12.5px; font-weight: 600; padding: 9px 16px; border-radius: 999px;
   opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s;
