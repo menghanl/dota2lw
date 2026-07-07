@@ -30,6 +30,10 @@
   --shadow-up: 0 -8px 24px rgba(0,0,0,.5);
   --radius: 14px;
   --maxw: 520px;
+  /* env() is 0 in standalone without viewport-fit=cover (WebKit 237961), so
+     keep a real floor under the tab icons for the home-indicator area */
+  --tab-pad: max(18px, env(safe-area-inset-bottom, 0px));
+  --tabbar-h: calc(51px + var(--tab-pad));
 }
 :root[data-theme="light"] {
   --bg: #fafafa;
@@ -67,7 +71,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  padding-bottom: calc(70px + env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--tabbar-h) + 8px);
 }
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 12px; }
 a { color: var(--accent); text-decoration: none; }
@@ -118,7 +122,7 @@ a { color: var(--accent); text-decoration: none; }
   background: var(--bar-bg);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--line);
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: var(--tab-pad);
 }
 .tabbar .tabs { max-width: var(--maxw); margin: 0 auto; display: flex; }
 .tabbar button {
@@ -151,7 +155,7 @@ a { color: var(--accent); text-decoration: none; }
 /* ---------- matches tab: pinned hero + chips, scrolling schedule ---------- */
 .matches-wrap {
   display: flex; flex-direction: column;
-  height: calc(100dvh - 47px - 62px - env(safe-area-inset-bottom));
+  height: calc(100dvh - 47px - var(--tabbar-h));
   min-height: 400px;
 }
 .matches-wrap .chip-bar { flex: none; }
@@ -292,7 +296,7 @@ a { color: var(--accent); text-decoration: none; }
 .qual-row:last-child { border-bottom: 0; }
 
 /* ---------- metro bracket + lens (worldcup2026 pattern) ---------- */
-.metro-wrap { display: flex; flex-direction: column; height: calc(100dvh - 47px - 62px - env(safe-area-inset-bottom)); min-height: 480px; }
+.metro-wrap { display: flex; flex-direction: column; height: calc(100dvh - 47px - var(--tabbar-h)); min-height: 480px; }
 .metro-pane { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .metro-pane::-webkit-scrollbar { display: none; }
 .metro-head { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between;
