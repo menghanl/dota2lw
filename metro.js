@@ -127,8 +127,9 @@ const Metro = (() => {
   }
 
   // ------------------------------------------------------------ stations
-  // HTML-in-SVG cards so logo / name / score / footer lay out with flex
-  // (hand-placed SVG text was colliding on narrow 4-across cards).
+  // Cards are HTML overlaid on the SVG (%, same box as the viewBox). Avoid
+  // <foreignObject> — Safari/iOS scales FO content wrong vs the SVG, so rings
+  // and dashed logo placeholders drift off the card.
   function svgImg(t, x, yy, sz, op) {
     const src = logoOf(t);
     if (!src) return '';
@@ -157,22 +158,25 @@ const Metro = (() => {
     return parts.join(' · ') || '—';
   }
 
+  // Same <img> box as real logos — empty <span> placeholders mis-align on iOS flex.
+  const LOGO_PH = "data:image/svg+xml," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">' +
+    '<circle cx="7" cy="7" r="5.2" fill="none" stroke="%236b7386" stroke-width="1.2" stroke-dasharray="2.2 2"/>' +
+    '</svg>');
+
   function teamRowHTML(t, score, opts) {
     const { showScore, lose, winScore, nameMax } = opts;
-    const src = logoOf(t);
-    const logo = src
-      ? `<img class="mt-logo" src="${esc(src)}" alt="" referrerpolicy="no-referrer" draggable="false"/>`
-      : `<span class="mt-logo-ph"></span>`;
+    const src = logoOf(t) || LOGO_PH;
+    const logo = `<img class="mt-logo${logoOf(t) ? '' : ' mt-logo-ph'}" src="${esc(src)}" alt="" referrerpolicy="no-referrer" draggable="false"/>`;
     const nm = shortLabel(t, nameMax);
     const sc = showScore
       ? `<span class="mt-sc${winScore ? ' win' : ''}">${esc(score != null ? score : '–')}</span>`
       : '';
-    return `<div class="mt-row${lose ? ' lose' : ''}">${logo}<span class="mt-nm">${esc(nm)}</span>${sc}</div>`;
+    return `<span class="mt-row${lose ? ' lose' : ''}">${logo}<span class="mt-nm">${esc(nm)}</span>${sc}</span>`;
   }
 
-  function stationSVG(m, g, f) {
+  function stationHTML(m, g, f, mapH) {
     const st = stateOf(m);
-    const cx = g.x, cy = g.y;
     const w = g.w || cardW(g.n || 2);
     const hh = g.h || ST_H;
     const t1 = m.team1 && m.team1.name ? m.team1 : null;
@@ -181,39 +185,28 @@ const Metro = (() => {
     const nameMax = narrow ? 7 : w < 140 ? 10 : 14;
     const showScore = st !== 'up' && (m.score1 != null || m.score2 != null);
     const wt = st === 'done' ? winnerTeam(m) : null;
-    const x0 = cx - w / 2;
-    const y0 = cy - hh / 2;
-    const rx = 10;
-
-    const rowOpts = (t, score) => ({
-      showScore,
-      lose: !!(wt && t && t !== wt),
-      winScore: !!(wt && t === wt) || (st === 'live' && false),
-      nameMax,
-    });
-    // highlight winning score number when decided
-    const o1 = rowOpts(t1, m.score1); o1.winScore = m.winner === 1;
-    const o2 = rowOpts(t2, m.score2); o2.winScore = m.winner === 2;
-
-    const footCls = st === 'live' ? ' live' : st === 'up' ? ' up' : '';
-    const card = `<div xmlns="http://www.w3.org/1999/xhtml" class="mt-card mt-st-${st}">` +
-      `<div class="mt-body">` +
-        teamRowHTML(t1, m.score1, o1) +
-        teamRowHTML(t2, m.score2, o2) +
-      `</div>` +
-      `<div class="mt-foot${footCls}">${esc(metaLine(m, st, narrow))}</div>` +
-      `</div>`;
-
-    let inner = '';
-    if (st === 'live') {
-      inner += `<rect class="mt-livering" x="${(x0 - 3).toFixed(1)}" y="${(y0 - 3).toFixed(1)}" width="${w + 6}" height="${hh + 6}" rx="${rx + 2}"/>`;
-    }
-    // invisible hit target (foreignObject can miss edge clicks)
-    inner += `<rect class="mt-hit" x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${w}" height="${hh}" rx="${rx}"/>`;
-    inner += `<foreignObject x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${w}" height="${hh}">${card}</foreignObject>`;
-
+    const x0 = g.x - w / 2;
+    const y0 = g.y - hh / 2;
     g.w = w; g.h = hh;
-    return `<g class="mt-station" data-key="${key(f)}" data-names="${esc(stName(m))}">${inner}</g>`;
+
+    const o1 = { showScore, lose: !!(wt && t1 && t1 !== wt), winScore: m.winner === 1, nameMax };
+    const o2 = { showScore, lose: !!(wt && t2 && t2 !== wt), winScore: m.winner === 2, nameMax };
+    const footCls = st === 'live' ? ' live' : st === 'up' ? ' up' : '';
+
+    const left = (x0 / W * 100).toFixed(3);
+    const top = (y0 / mapH * 100).toFixed(3);
+    const ww = (w / W * 100).toFixed(3);
+    const hhPct = (hh / mapH * 100).toFixed(3);
+
+    return `<button type="button" class="mt-station mt-st-${st}" data-key="${key(f)}" data-names="${esc(stName(m))}"` +
+      ` style="left:${left}%;top:${top}%;width:${ww}%;height:${hhPct}%">` +
+      `<span class="mt-card">` +
+        `<span class="mt-body">` +
+          teamRowHTML(t1, m.score1, o1) +
+          teamRowHTML(t2, m.score2, o2) +
+        `</span>` +
+        `<span class="mt-foot${footCls}">${esc(metaLine(m, st, narrow))}</span>` +
+      `</span></button>`;
   }
 
   function qualSVG(q, g) {
@@ -223,7 +216,7 @@ const Metro = (() => {
     if (t) inner = `<circle class="mt-pill mt-r-done" cx="${g.x}" cy="${g.y}" r="${r}"/>` + svgImg(t, g.x, g.y, r * 1.35);
     else inner = `<circle class="mt-hollow" cx="${g.x}" cy="${g.y}" r="${r - 2}"/><text class="mt-qmark" x="${g.x}" y="${g.y}">?</text>`;
     g.w = r * 2; g.h = r * 2;
-    return `<g class="mt-station mt-qual" data-names="${esc(t ? t.name : '')}">${inner}</g>`;
+    return `<g class="mt-qual" data-names="${esc(t ? t.name : '')}">${inner}</g>`;
   }
 
   function segPath(a, b) {
@@ -235,7 +228,8 @@ const Metro = (() => {
 
   function renderMap(brackets) {
     const { geo, secs, H } = layout(brackets);
-    let segs = '', sts = '', labels = '';
+    const mapH = Math.ceil(H);
+    let segs = '', quals = '', labels = '', stations = '';
 
     secs.forEach((s) => { labels += `<text class="mt-slabel" x="10" y="${s.y}">${esc(s.label)}</text>`; });
 
@@ -259,7 +253,7 @@ const Metro = (() => {
 
       b.rounds.forEach((ms, r) => ms.forEach((m, i) => {
         const f = { b: bi, kind: 'm', r, i };
-        sts += stationSVG(m, geo[key(f)], f);
+        stations += stationHTML(m, geo[key(f)], f, mapH);
       }));
 
       (b.quals || []).forEach((q) => {
@@ -270,14 +264,14 @@ const Metro = (() => {
         const st = stateOf(m);
         const wname = st === 'done' && winnerTeam(m) ? winnerTeam(m).name : '';
         segs += `<path class="mt-seg ${st === 'live' ? 'mt-seg-live' : st === 'up' ? 'mt-seg-up mt-dashed' : ''}" data-ids="${esc(wname)}" d="${segPath(mg, qg)}"/>`;
-        sts += qualSVG(q, qg);
+        quals += qualSVG(q, qg);
       });
 
       if (b.thirdPlace) {
         const f = { b: bi, kind: '3rd', r: 0, i: 0 };
         const g = geo[key(f)];
         labels += `<text class="mt-rlabel" x="${g.x}" y="${g.y - ST_H / 2 - 10}">3rd place</text>`;
-        sts += stationSVG(b.thirdPlace, g, f);
+        stations += stationHTML(b.thirdPlace, g, f, mapH);
       }
       const fin = geo[`${bi}:m:${b.rounds.length - 1}:0`];
       if (fin && !(b.quals || []).length)
@@ -285,10 +279,14 @@ const Metro = (() => {
     });
 
     refs.canvas.innerHTML =
-      `<svg id="metroMap" viewBox="0 0 ${W} ${Math.ceil(H)}" xmlns="http://www.w3.org/2000/svg" aria-label="Knockout map">` +
-      `<g>${segs}</g><g>${sts}</g><g>${labels}</g>` +
-      `<g class="mt-focusring" id="mtFring" style="display:none"><rect/></g></svg>`;
+      `<div class="metro-stage" style="aspect-ratio:${W}/${mapH}">` +
+        `<svg id="metroMap" viewBox="0 0 ${W} ${mapH}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg" aria-label="Knockout map">` +
+          `<g>${segs}</g><g>${quals}</g><g>${labels}</g>` +
+        `</svg>` +
+        `<div class="metro-stations">${stations}</div>` +
+      `</div>`;
     refs.geo = geo;
+    refs.mapH = mapH;
   }
 
   // ------------------------------------------------------------ popup (ex-lens)
@@ -393,21 +391,19 @@ const Metro = (() => {
 
   // --------------------------------------------------- focus/trace/sync
   function syncMap() {
+    const stage = refs.canvas.querySelector('.metro-stage');
     const svg = refs.canvas.querySelector('svg');
-    if (!svg) return;
-    const fring = svg.querySelector('#mtFring'), rect = fring.querySelector('rect');
-    const g = cur.popup ? refs.geo[key(cur.focus)] : null;
-    if (g) {
-      const pad = 4, rw = (g.w || ST_H * 2) + pad * 2, rh = (g.h || ST_H) + pad * 2;
-      rect.setAttribute('x', -rw / 2); rect.setAttribute('y', -rh / 2);
-      rect.setAttribute('width', rw); rect.setAttribute('height', rh); rect.setAttribute('rx', 12);
-      fring.setAttribute('transform', `translate(${g.x},${g.y})`);
-      fring.style.display = '';
-    } else fring.style.display = 'none';
+    if (!stage || !svg) return;
+
+    const focusKey = cur.popup && cur.focus ? key(cur.focus) : null;
+    stage.querySelectorAll('.mt-station').forEach((s) => {
+      s.classList.toggle('focus', !!focusKey && s.dataset.key === focusKey);
+    });
 
     const trace = cur.trace;
+    stage.classList.toggle('trace', !!trace);
     svg.classList.toggle('trace', !!trace);
-    svg.querySelectorAll('.mt-station').forEach((s) => {
+    stage.querySelectorAll('.mt-station').forEach((s) => {
       if (trace) {
         const names = (s.dataset.names || '').split('|');
         s.classList.toggle('on', names.includes(trace));
@@ -422,10 +418,10 @@ const Metro = (() => {
   }
 
   function scrollToFocus(smooth) {
-    const svg = refs.canvas.querySelector('svg');
+    const stage = refs.canvas.querySelector('.metro-stage');
     const g = refs.geo[key(cur.focus)];
-    if (!svg || !g || !cur.popup) return;
-    const scale = svg.clientWidth / W || 1;
+    if (!stage || !g || !cur.popup) return;
+    const scale = stage.clientWidth / W || 1;
     let top = refs.canvas.offsetTop + g.y * scale - refs.pane.clientHeight * 0.35;
     top = Math.max(0, Math.min(top, refs.pane.scrollHeight - refs.pane.clientHeight));
     refs.pane.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
