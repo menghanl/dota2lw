@@ -158,16 +158,13 @@ const Metro = (() => {
     return parts.join(' · ') || '—';
   }
 
-  // Same <img> box as real logos — empty <span> placeholders mis-align on iOS flex.
-  const LOGO_PH = "data:image/svg+xml," + encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 14 14">' +
-    '<circle cx="7" cy="7" r="5.2" fill="none" stroke="%236b7386" stroke-width="1.2" stroke-dasharray="2.2 2"/>' +
-    '</svg>');
-
   function teamRowHTML(t, score, opts) {
     const { showScore, lose, winScore, nameMax } = opts;
-    const src = logoOf(t) || LOGO_PH;
-    const logo = `<img class="mt-logo${logoOf(t) ? '' : ' mt-logo-ph'}" src="${esc(src)}" alt="" referrerpolicy="no-referrer" draggable="false"/>`;
+    const src = logoOf(t);
+    // CSS ring placeholder (not data-URI img — iOS + esc() made those invisible)
+    const logo = src
+      ? `<img class="mt-logo" src="${esc(src)}" alt="" referrerpolicy="no-referrer" draggable="false"/>`
+      : `<span class="mt-logo mt-logo-ph" aria-hidden="true"></span>`;
     const nm = shortLabel(t, nameMax);
     const sc = showScore
       ? `<span class="mt-sc${winScore ? ' win' : ''}">${esc(score != null ? score : '–')}</span>`

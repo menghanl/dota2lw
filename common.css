@@ -360,11 +360,20 @@ svg.trace .mt-seg { opacity: .12; } svg.trace .mt-seg.on { opacity: 1; }
 }
 .mt-row { display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 16px; }
 .mt-row.lose { opacity: .42; }
+/* shared 14×14 slot for real logos and TBD ring — fixed flex basis for iOS */
 .mt-logo {
-  display: block; width: 14px; height: 14px; object-fit: contain;
-  flex: 0 0 14px; align-self: center;
+  box-sizing: border-box;
+  flex: 0 0 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px;
+  align-self: center;
 }
-.mt-logo-ph { opacity: .9; }
+img.mt-logo { display: block; object-fit: contain; }
+span.mt-logo-ph {
+  display: block;
+  border-radius: 50%;
+  border: 1.2px dashed var(--faint);
+  background: transparent;
+  opacity: .9;
+}
 .mt-nm {
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
