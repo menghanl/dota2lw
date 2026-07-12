@@ -1,30 +1,41 @@
-/* metro.js — "metro map + lens" knockout view, ported from the worldcup2026
-   PWA and adapted for Liquipedia Dota brackets (multiple stacked brackets,
-   qualification columns, Bo-series scores, no clocks).
+/* metro.js — knockout map for Liquipedia Dota brackets.
 
-   Map: SVG stations (matches) + colored segments (paths). Decided matches
-   collapse to the winner's logo; live matches pulse; TBD slots are hollow.
-   Lens: focused match with feeder mini-cards, the full match card (tap to
-   expand picks), and a "winner advances to" destination. Chevrons/swipe
-   navigate within a round; tapping a team traces its route. */
+   Map: SVG stations (rich match cards) + colored segments (paths).
+   Decided matches dim the loser; live matches pulse; TBD slots are hollow.
+   Details open as a popup when a station is selected (feeders, full match
+   card, destination). Tap a team in the popup to trace its route. */
 'use strict';
 
 const Metro = (() => {
-  const { h, teamImg, logoOf, matchState } = UI;
+  const { h, teamImg, logoOf, matchState, fmtTime, fmtDay, relDay } = UI;
 
   const W = 390;                 // viewBox width
-  const ST_H = 26;               // station pill height
-  const ROW_H = 78;              // vertical rhythm between rounds (rows)
-  const SEC_GAP = 34;            // gap between stacked brackets
+  const ST_H = 72;               // station card height (2 team rows + footer)
+  const ROW_H = 120;             // vertical rhythm between rounds
+  const SEC_GAP = 28;            // gap between stacked brackets
+  const PAD_X = 10;
 
   // persistent view state across re-renders, kept per mount key so multiple
   // bracket tabs (Survival / Playoffs) don't clobber each other's focus
-  const states = {};             // key -> {focus: {b,kind,r,i}, trace: name}
+  const states = {};             // key -> {focus, trace, popup}
   let cur = null;                // state of the current mount
   let refs = {};                 // dom refs of current mount
 
   const key = (f) => f ? `${f.b}:${f.kind}:${f.r}:${f.i}` : '';
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function shortLabel(t, max = 8) {
+    const s = (t && (t.short || t.name)) || '';
+    if (!s) return 'TBD';
+    return s.length > max ? s.slice(0, max - 1) + '…' : s;
+  }
+
+  function cardW(count) {
+    if (count <= 1) return 176;
+    if (count === 2) return 156;
+    if (count === 3) return 118;
+    return 90; // 4-across
+  }
 
   // ------------------------------------------------------------ topology
   function matchAt(brackets, f) {
@@ -49,7 +60,6 @@ const Metro = (() => {
   function childrenOf(brackets, f) {
     const b = brackets[f.b];
     if (f.kind === '3rd') {
-      // 3rd place is fed by the final's feeders (SF losers)
       const fin = (b.rounds[b.rounds.length - 1] || [])[0];
       return (fin && fin.feeders || []).map((j) => ({ b: f.b, kind: 'm', r: b.rounds.length - 2, i: j }));
     }
@@ -75,103 +85,150 @@ const Metro = (() => {
   }
 
   // ------------------------------------------------------------ geometry
-  // Rounds are ROWS flowing top -> bottom (like the worldcup2026 map), so the
-  // lens directions line up with the map: feeders come from the row above,
-  // the destination is the row below, and prev/next moves along the row.
+  // Rounds are ROWS flowing top -> bottom. Feeders come from the row above;
+  // the destination is the row below; prev/next moves along the row.
   function layout(brackets) {
-    const geo = {};   // key -> {x,y,w,h}
-    const secs = [];  // section label positions
+    const geo = {};
+    const secs = [];
     let y = 8;
     brackets.forEach((b, bi) => {
       const hasQualRow = (b.quals || []).length > 0;
       secs.push({ label: b.name, y: y + 12 });
       const rowNames = b.roundNames.concat(hasQualRow ? [b.qualHeader || 'Qualified'] : []);
-      const y0 = y + 46 + ST_H / 2;                 // section label + first row label
+      const y0 = y + 46 + ST_H / 2;
       const rowY = (r) => y0 + r * ROW_H;
 
       b.rounds.forEach((ms, r) => {
-        const colW = (W - 16) / Math.max(ms.length, 1);
+        const n = Math.max(ms.length, 1);
+        const ww = cardW(n);
+        const colW = (W - PAD_X * 2) / n;
         ms.forEach((m, i) => {
           const feeds = (m.feeders || []).map((j) => geo[`${bi}:m:${r - 1}:${j}`]).filter(Boolean);
           const x = feeds.length
             ? feeds.reduce((s, g) => s + g.x, 0) / feeds.length
-            : 8 + colW * (i + 0.5);
-          geo[`${bi}:m:${r}:${i}`] = { x, y: rowY(r) };
+            : PAD_X + colW * (i + 0.5);
+          geo[`${bi}:m:${r}:${i}`] = { x, y: rowY(r), w: ww, h: ST_H, n };
         });
       });
       (b.quals || []).forEach((q) => {
         const src = geo[`${bi}:m:${q.fromRound}:${q.fromIndex}`];
-        if (src) geo[`${bi}:q:${q.fromRound}:${q.fromIndex}`] = { x: src.x, y: rowY(b.rounds.length) };
+        if (src) geo[`${bi}:q:${q.fromRound}:${q.fromIndex}`] = { x: src.x, y: rowY(b.rounds.length), w: 36, h: 36 };
       });
       const lastRow = rowY(b.rounds.length - 1 + (hasQualRow ? 1 : 0));
       if (b.thirdPlace) {
-        // beside the grand final, same row
         const fin = geo[`${bi}:m:${b.rounds.length - 1}:0`];
-        geo[`${bi}:3rd:0:0`] = { x: W - 62, y: fin ? fin.y : lastRow };
+        const tw = cardW(1);
+        geo[`${bi}:3rd:0:0`] = { x: W - PAD_X - tw / 2, y: fin ? fin.y : lastRow, w: tw, h: ST_H, n: 1 };
       }
       geo[`sec:${bi}`] = { rowNames, rowY };
-      y = lastRow + ST_H / 2 + 16 + SEC_GAP;
+      y = lastRow + ST_H / 2 + 18 + SEC_GAP;
     });
     return { geo, secs, H: y };
   }
 
   // ------------------------------------------------------------ stations
+  // HTML-in-SVG cards so logo / name / score / footer lay out with flex
+  // (hand-placed SVG text was colliding on narrow 4-across cards).
   function svgImg(t, x, yy, sz, op) {
     const src = logoOf(t);
     if (!src) return '';
     return `<image href="${esc(src)}" x="${(x - sz / 2).toFixed(1)}" y="${(yy - sz / 2).toFixed(1)}" width="${sz}" height="${sz}" opacity="${op == null ? 1 : op}" preserveAspectRatio="xMidYMid meet"/>`;
   }
 
+  function whenLabel(ts, narrow) {
+    const d = new Date(ts * 1000);
+    const day = relDay(ts) || (narrow
+      ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      : fmtDay.format(d));
+    const time = fmtTime.format(d);
+    return `${day} · ${time}`;
+  }
+
+  function metaLine(m, st, narrow) {
+    if (st === 'live') return narrow ? 'LIVE' : (m.bestOf ? `LIVE · Bo${m.bestOf}` : 'LIVE');
+    if (st === 'done') return m.draw ? 'Draw' : 'Final';
+    if (narrow) {
+      if (m.ts) return whenLabel(m.ts, true);
+      return m.bestOf ? `Bo${m.bestOf}` : '—';
+    }
+    const parts = [];
+    if (m.ts) parts.push(whenLabel(m.ts, false));
+    if (m.bestOf) parts.push(`Bo${m.bestOf}`);
+    return parts.join(' · ') || '—';
+  }
+
+  function teamRowHTML(t, score, opts) {
+    const { showScore, lose, winScore, nameMax } = opts;
+    const src = logoOf(t);
+    const logo = src
+      ? `<img class="mt-logo" src="${esc(src)}" alt="" referrerpolicy="no-referrer" draggable="false"/>`
+      : `<span class="mt-logo-ph"></span>`;
+    const nm = shortLabel(t, nameMax);
+    const sc = showScore
+      ? `<span class="mt-sc${winScore ? ' win' : ''}">${esc(score != null ? score : '–')}</span>`
+      : '';
+    return `<div class="mt-row${lose ? ' lose' : ''}">${logo}<span class="mt-nm">${esc(nm)}</span>${sc}</div>`;
+  }
+
   function stationSVG(m, g, f) {
     const st = stateOf(m);
     const cx = g.x, cy = g.y;
-    let w, inner = '';
-    const pill = (ww) =>
-      `<rect class="mt-pill mt-r-${st}" x="${(cx - ww / 2).toFixed(1)}" y="${cy - ST_H / 2}" width="${ww}" height="${ST_H}" rx="${ST_H / 2}"/>`;
-    const ring = (ww) =>
-      `<rect class="mt-livering" x="${(cx - ww / 2 - 3).toFixed(1)}" y="${cy - ST_H / 2 - 3}" width="${ww + 6}" height="${ST_H + 6}" rx="${(ST_H + 6) / 2}"/>`;
-
+    const w = g.w || cardW(g.n || 2);
+    const hh = g.h || ST_H;
     const t1 = m.team1 && m.team1.name ? m.team1 : null;
     const t2 = m.team2 && m.team2.name ? m.team2 : null;
-    if (!t1 && !t2) {
-      w = ST_H;
-      inner = `<circle class="mt-hollow" cx="${cx}" cy="${cy}" r="${ST_H / 2 - 1}"/><text class="mt-qmark" x="${cx}" y="${cy}">?</text>`;
-    } else {
-      // both teams always visible; on decided matches the loser is dimmed
-      w = Math.round(ST_H * 2);
-      if (st === 'live') inner += ring(w);
-      inner += pill(w);
-      const sz = ST_H - 7, off = w * 0.24;
-      const wt = st === 'done' ? winnerTeam(m) : null;
-      const op = (t) => (wt && t !== wt ? 0.32 : 1);
-      inner += t1 ? svgImg(t1, cx - off, cy, sz, op(m.team1)) : `<text class="mt-qmark" x="${cx - off}" y="${cy}">?</text>`;
-      inner += t2 ? svgImg(t2, cx + off, cy, sz, op(m.team2)) : `<text class="mt-qmark" x="${cx + off}" y="${cy}">?</text>`;
-      if (wt) {
-        // subtle ring under the winner's logo
-        inner += `<circle class="mt-winring" cx="${wt === m.team1 ? cx - off : cx + off}" cy="${cy}" r="${sz / 2 + 2.5}"/>`;
-      }
-      if ((st === 'live' || st === 'done') && m.score1 != null && m.score2 != null) {
-        const b1 = m.winner === 1 ? ' class="mt-score-w"' : '';
-        const b2 = m.winner === 2 ? ' class="mt-score-w"' : '';
-        inner += `<text class="mt-score" x="${cx}" y="${cy + ST_H / 2 + 11}"><tspan${b1}>${esc(m.score1)}</tspan>–<tspan${b2}>${esc(m.score2)}</tspan></text>`;
-      }
+    const narrow = w < 110;
+    const nameMax = narrow ? 7 : w < 140 ? 10 : 14;
+    const showScore = st !== 'up' && (m.score1 != null || m.score2 != null);
+    const wt = st === 'done' ? winnerTeam(m) : null;
+    const x0 = cx - w / 2;
+    const y0 = cy - hh / 2;
+    const rx = 10;
+
+    const rowOpts = (t, score) => ({
+      showScore,
+      lose: !!(wt && t && t !== wt),
+      winScore: !!(wt && t === wt) || (st === 'live' && false),
+      nameMax,
+    });
+    // highlight winning score number when decided
+    const o1 = rowOpts(t1, m.score1); o1.winScore = m.winner === 1;
+    const o2 = rowOpts(t2, m.score2); o2.winScore = m.winner === 2;
+
+    const footCls = st === 'live' ? ' live' : st === 'up' ? ' up' : '';
+    const card = `<div xmlns="http://www.w3.org/1999/xhtml" class="mt-card mt-st-${st}">` +
+      `<div class="mt-body">` +
+        teamRowHTML(t1, m.score1, o1) +
+        teamRowHTML(t2, m.score2, o2) +
+      `</div>` +
+      `<div class="mt-foot${footCls}">${esc(metaLine(m, st, narrow))}</div>` +
+      `</div>`;
+
+    let inner = '';
+    if (st === 'live') {
+      inner += `<rect class="mt-livering" x="${(x0 - 3).toFixed(1)}" y="${(y0 - 3).toFixed(1)}" width="${w + 6}" height="${hh + 6}" rx="${rx + 2}"/>`;
     }
-    g.w = w; g.h = ST_H;
+    // invisible hit target (foreignObject can miss edge clicks)
+    inner += `<rect class="mt-hit" x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${w}" height="${hh}" rx="${rx}"/>`;
+    inner += `<foreignObject x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${w}" height="${hh}">${card}</foreignObject>`;
+
+    g.w = w; g.h = hh;
     return `<g class="mt-station" data-key="${key(f)}" data-names="${esc(stName(m))}">${inner}</g>`;
   }
 
   function qualSVG(q, g) {
     const t = q.team && q.team.name ? q.team : null;
+    const r = Math.min((g.h || 36) / 2, 18);
     let inner;
-    if (t) inner = `<circle class="mt-pill mt-r-done" cx="${g.x}" cy="${g.y}" r="${ST_H / 2 + 2}"/>` + svgImg(t, g.x, g.y, ST_H - 4);
-    else inner = `<circle class="mt-hollow" cx="${g.x}" cy="${g.y}" r="${ST_H / 2 - 1}"/><text class="mt-qmark" x="${g.x}" y="${g.y}">?</text>`;
-    g.w = ST_H + 4; g.h = ST_H + 4;
+    if (t) inner = `<circle class="mt-pill mt-r-done" cx="${g.x}" cy="${g.y}" r="${r}"/>` + svgImg(t, g.x, g.y, r * 1.35);
+    else inner = `<circle class="mt-hollow" cx="${g.x}" cy="${g.y}" r="${r - 2}"/><text class="mt-qmark" x="${g.x}" y="${g.y}">?</text>`;
+    g.w = r * 2; g.h = r * 2;
     return `<g class="mt-station mt-qual" data-names="${esc(t ? t.name : '')}">${inner}</g>`;
   }
 
   function segPath(a, b) {
-    // vertical flow: child (row above) bottom edge -> parent (row below) top edge
-    const y1 = a.y + ST_H / 2 + 4, y2 = b.y - ST_H / 2 - 4;
+    const ah = (a.h || ST_H) / 2, bh = (b.h || ST_H) / 2;
+    const y1 = a.y + ah + 3, y2 = b.y - bh - 3;
     const my = (y1 + y2) / 2;
     return `M ${a.x.toFixed(1)} ${y1.toFixed(1)} C ${a.x.toFixed(1)} ${my.toFixed(1)}, ${b.x.toFixed(1)} ${my.toFixed(1)}, ${b.x.toFixed(1)} ${y2.toFixed(1)}`;
   }
@@ -185,13 +242,12 @@ const Metro = (() => {
     brackets.forEach((b, bi) => {
       const sec = geo[`sec:${bi}`];
       sec.rowNames.forEach((name, r) => {
-        labels += `<text class="mt-rowlab" x="10" y="${sec.rowY(r) - ST_H / 2 - 8}">${esc(name)}</text>`;
+        labels += `<text class="mt-rowlab" x="10" y="${sec.rowY(r) - ST_H / 2 - 10}">${esc(name)}</text>`;
       });
 
       b.rounds.forEach((ms, r) => ms.forEach((m, i) => {
         const f = { b: bi, kind: 'm', r, i };
         const g = geo[key(f)];
-        // segments to parent (colored by this match's state; winner name for trace)
         (m.feeders || []).forEach((j) => {
           const child = b.rounds[r - 1][j];
           const cg = geo[`${bi}:m:${r - 1}:${j}`];
@@ -201,7 +257,6 @@ const Metro = (() => {
         });
       }));
 
-      // draw stations after segments
       b.rounds.forEach((ms, r) => ms.forEach((m, i) => {
         const f = { b: bi, kind: 'm', r, i };
         sts += stationSVG(m, geo[key(f)], f);
@@ -221,13 +276,12 @@ const Metro = (() => {
       if (b.thirdPlace) {
         const f = { b: bi, kind: '3rd', r: 0, i: 0 };
         const g = geo[key(f)];
-        labels += `<text class="mt-rlabel" x="${g.x}" y="${g.y - ST_H / 2 - 8}">3rd place</text>`;
+        labels += `<text class="mt-rlabel" x="${g.x}" y="${g.y - ST_H / 2 - 10}">3rd place</text>`;
         sts += stationSVG(b.thirdPlace, g, f);
       }
-      // trophy next to the grand final
       const fin = geo[`${bi}:m:${b.rounds.length - 1}:0`];
       if (fin && !(b.quals || []).length)
-        labels += `<text class="mt-trophy" x="${fin.x - ST_H - 18}" y="${fin.y}">🏆</text>`;
+        labels += `<text class="mt-trophy" x="${fin.x - (fin.w || 80) / 2 - 16}" y="${fin.y}">🏆</text>`;
     });
 
     refs.canvas.innerHTML =
@@ -237,7 +291,7 @@ const Metro = (() => {
     refs.geo = geo;
   }
 
-  // ------------------------------------------------------------ lens
+  // ------------------------------------------------------------ popup (ex-lens)
   function feederBtn(brackets, f) {
     const m = matchAt(brackets, f);
     if (!m) return h('div', { class: 'feeder ph' }, 'TBD');
@@ -254,14 +308,23 @@ const Metro = (() => {
         side(m.team1, st === 'done' && w && w !== m.team1),
         h('span', { class: 'vs' }, st === 'up' ? 'vs' : '–'),
         side(m.team2, st === 'done' && w && w !== m.team2)));
-    btn.addEventListener('click', () => setFocus(f));
+    btn.addEventListener('click', () => setFocus(f, { open: true }));
     return btn;
   }
 
-  function renderLens(brackets) {
+  function renderPopup(brackets) {
+    if (!cur.popup || !cur.focus) {
+      refs.sheet.classList.remove('open');
+      refs.backdrop.classList.remove('open');
+      return;
+    }
     const f = cur.focus;
     const m = matchAt(brackets, f);
-    if (!m) { refs.inner.innerHTML = ''; return; }
+    if (!m) {
+      refs.sheet.classList.remove('open');
+      refs.backdrop.classList.remove('open');
+      return;
+    }
     const b = brackets[f.b];
     const st = stateOf(m);
     const roundName = f.kind === '3rd' ? '3rd place match' : (b.roundNames[f.r] || `Round ${f.r + 1}`);
@@ -281,7 +344,6 @@ const Metro = (() => {
       kids.length ? (f.kind === '3rd' ? '▼ semifinal losers meet here' : '▼ winners meet here') : '▼');
 
     const card = UI.matchCard(m, { showStage: false });
-    // trace on team tap
     card.querySelectorAll('.m-trow').forEach((row, idx) => {
       row.addEventListener('click', (e) => {
         const t = idx === 0 ? m.team1 : m.team2;
@@ -291,18 +353,16 @@ const Metro = (() => {
       });
     });
 
-    // destination
     let dest;
     const par = f.kind === '3rd' ? null : parentOf(brackets, f);
     const q = f.kind === '3rd' ? null : qualOf(b, f);
     if (par) {
-      const pm = matchAt(brackets, par);
       const w = st === 'done' ? winnerTeam(m) : null;
       dest = h('button', { class: 'lens-dest', type: 'button' },
         h('span', { class: 'dt' }, 'Winner advances to'),
         h('span', { class: 'db' }, w ? teamImg(w, '') : null,
           `${b.roundNames[par.r] || 'next round'}${(b.rounds[par.r] || []).length > 1 ? ' · Match ' + (par.i + 1) : ''}`));
-      dest.addEventListener('click', () => setFocus(par));
+      dest.addEventListener('click', () => setFocus(par, { open: true }));
     } else if (q) {
       const w = st === 'done' ? winnerTeam(m) : null;
       dest = h('div', { class: 'lens-dest champ' },
@@ -321,10 +381,14 @@ const Metro = (() => {
     refs.inner.append(
       h('div', { class: 'lens-head' },
         h('span', { class: 'lens-title' }, `${b.name} · ${roundName}`),
-        badge, h('span', { class: 'lens-pos' }, `${pos} / ${N}`)),
-      feeders, conn, card, h('div', { class: 'lens-conn' }, '▼'), dest);
+        badge, h('span', { class: 'lens-pos' }, `${pos} / ${N}`),
+        h('button', { class: 'lens-close', type: 'button', 'aria-label': 'Close', onclick: closePopup }, '✕')),
+      feeders, conn, card, h('div', { class: 'lens-conn' }, '▼'), dest,
+      h('div', { class: 'lens-hint' }, '‹ › browse round · tap team to trace route · tap card for picks'));
 
     refs.prev.disabled = refs.next.disabled = (N <= 1);
+    refs.sheet.classList.add('open');
+    refs.backdrop.classList.add('open');
   }
 
   // --------------------------------------------------- focus/trace/sync
@@ -332,11 +396,11 @@ const Metro = (() => {
     const svg = refs.canvas.querySelector('svg');
     if (!svg) return;
     const fring = svg.querySelector('#mtFring'), rect = fring.querySelector('rect');
-    const g = refs.geo[key(cur.focus)];
+    const g = cur.popup ? refs.geo[key(cur.focus)] : null;
     if (g) {
-      const pad = 5, rw = (g.w || ST_H * 2) + pad * 2, rh = (g.h || ST_H) + pad * 2;
+      const pad = 4, rw = (g.w || ST_H * 2) + pad * 2, rh = (g.h || ST_H) + pad * 2;
       rect.setAttribute('x', -rw / 2); rect.setAttribute('y', -rh / 2);
-      rect.setAttribute('width', rw); rect.setAttribute('height', rh); rect.setAttribute('rx', rh / 2);
+      rect.setAttribute('width', rw); rect.setAttribute('height', rh); rect.setAttribute('rx', 12);
       fring.setAttribute('transform', `translate(${g.x},${g.y})`);
       fring.style.display = '';
     } else fring.style.display = 'none';
@@ -360,18 +424,25 @@ const Metro = (() => {
   function scrollToFocus(smooth) {
     const svg = refs.canvas.querySelector('svg');
     const g = refs.geo[key(cur.focus)];
-    if (!svg || !g) return;
+    if (!svg || !g || !cur.popup) return;
     const scale = svg.clientWidth / W || 1;
-    let top = refs.canvas.offsetTop + g.y * scale - refs.pane.clientHeight * 0.45;
+    let top = refs.canvas.offsetTop + g.y * scale - refs.pane.clientHeight * 0.35;
     top = Math.max(0, Math.min(top, refs.pane.scrollHeight - refs.pane.clientHeight));
     refs.pane.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
   }
 
   function setFocus(f, opts = {}) {
     cur.focus = f;
-    renderLens(refs.brackets);
+    if (opts.open !== false) cur.popup = true;
+    renderPopup(refs.brackets);
     syncMap();
-    scrollToFocus(!opts.instant);
+    scrollToFocus(false);
+  }
+
+  function closePopup() {
+    cur.popup = false;
+    renderPopup(refs.brackets);
+    syncMap();
   }
 
   function setTrace(name) {
@@ -381,17 +452,18 @@ const Metro = (() => {
 
   function nav(dir) {
     const f = cur.focus;
+    if (!f) return;
     const b = refs.brackets[f.b];
     if (f.kind === '3rd') return;
     const N = (b.rounds[f.r] || []).length;
     if (N <= 1) return;
-    setFocus({ ...f, i: (f.i + dir + N) % N });
+    setFocus({ ...f, i: (f.i + dir + N) % N }, { open: true });
   }
 
   // ------------------------------------------------------------ mount
   function mount(container, brackets, opts = {}) {
     const skey = opts.key || 'default';
-    cur = states[skey] = states[skey] || { focus: null, trace: null };
+    cur = states[skey] = states[skey] || { focus: null, trace: null, popup: false };
     refs = { brackets };
     const legend = h('div', { class: 'metro-leg' },
       h('span', {}, h('span', { class: 'd green' }), 'live'),
@@ -401,48 +473,53 @@ const Metro = (() => {
     refs.canvas = h('div', { id: 'metroCanvas' });
     refs.clear = h('button', { class: 'metro-clearbtn', type: 'button', onclick: () => setTrace(null) }, '✕ clear route');
     refs.pane = h('div', { class: 'metro-pane' },
-      h('div', { class: 'metro-head' }, h('span', { class: 'metro-ttl' }, 'Knockout map'), legend),
+      h('div', { class: 'metro-head' },
+        h('span', { class: 'metro-ttl' }, 'Knockout map'),
+        legend,
+        h('span', { class: 'metro-hint-inline' }, 'tap a match for details')),
       refs.canvas);
 
     refs.inner = h('div', { class: 'lens-inner' });
     refs.prev = h('button', { class: 'lens-chev left', type: 'button', 'aria-label': 'Previous match', onclick: () => nav(-1) }, '‹');
     refs.next = h('button', { class: 'lens-chev right', type: 'button', 'aria-label': 'Next match', onclick: () => nav(1) }, '›');
-    const lens = h('div', { class: 'lens' }, refs.prev, refs.next, refs.inner,
-      h('div', { class: 'lens-hint' }, '‹ › browse round · tap team to trace route · tap card for picks'));
+    refs.backdrop = h('div', { class: 'metro-backdrop', onclick: closePopup });
+    refs.sheet = h('div', { class: 'metro-sheet', role: 'dialog', 'aria-modal': 'true' },
+      refs.prev, refs.next, refs.inner);
 
     const mapWrap = h('div', { class: 'metro-wrap' },
-      h('div', { style: 'position:relative;flex:1 1 auto;min-height:0;display:flex;flex-direction:column' },
+      h('div', { class: 'metro-mapcol' },
         refs.pane, h('div', { class: 'metro-fade' }), refs.clear),
-      lens);
+      refs.backdrop, refs.sheet);
     container.append(mapWrap);
 
     renderMap(brackets);
 
-    // validate / default focus
     if (!cur.focus || !matchAt(brackets, cur.focus)) cur.focus = defaultFocus(brackets);
-    if (!cur.focus) return;
 
-    // map taps
     refs.canvas.addEventListener('click', (e) => {
       const st = e.target.closest('.mt-station');
       if (!st || !st.dataset.key) return;
       const [b, kind, r, i] = st.dataset.key.split(':');
-      setFocus({ b: +b, kind, r: +r, i: +i });
+      setFocus({ b: +b, kind, r: +r, i: +i }, { open: true });
     });
 
-    // swipe on lens
+    // swipe on sheet
     let tx = null;
-    lens.addEventListener('touchstart', (e) => { tx = e.touches[0].clientX; }, { passive: true });
-    lens.addEventListener('touchend', (e) => {
+    refs.sheet.addEventListener('touchstart', (e) => { tx = e.touches[0].clientX; }, { passive: true });
+    refs.sheet.addEventListener('touchend', (e) => {
       if (tx == null) return;
       const dx = e.changedTouches[0].clientX - tx;
       if (Math.abs(dx) > 44) nav(dx < 0 ? 1 : -1);
       tx = null;
     }, { passive: true });
 
-    renderLens(brackets);
+    // Escape closes popup
+    const onKey = (e) => { if (e.key === 'Escape' && cur.popup) closePopup(); };
+    document.addEventListener('keydown', onKey);
+    // no cleanup hook on remount — page re-render replaces the whole main
+
+    renderPopup(brackets);
     syncMap();
-    requestAnimationFrame(() => scrollToFocus(false));
   }
 
   return { mount };
